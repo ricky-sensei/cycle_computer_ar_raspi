@@ -1,0 +1,105 @@
+Raspberry Pi 画面表示関連メモ
+==============================
+
+目的
+----
+macOSで開発したPygame画面を、デスクトップ環境のない
+Raspberry Pi OS LiteからHDMIディスプレイへ表示する。
+
+
+最初に起きていたこと
+--------------------
+通常どおり「python main.py」を実行すると、Pygameは起動したが
+SDLの画面ドライバーとして「offscreen」が選ばれていた。
+
+offscreenはメモリ上の見えない仮想画面へ描画するため、
+プログラムは動作していてもHDMIには何も表示されなかった。
+
+また、次の問題も発生した。
+
+・opencv-pythonの読み込みに必要なlibGL.so.1がなかった
+・fc-listがなく、システムフォントを検索できなかった
+・音声デバイスがなく、ALSAの警告が出た
+
+今回の表示確認では、OpenCV、実カメラ、起動動画を一時的に無効化した。
+フォントはPygameのデフォルトフォントを使用している。
+
+
+HDMIへ直接表示するために行ったこと
+----------------------------------
+Raspberry PiのKMS/DRM機能を使い、デスクトップ環境を経由せずに
+SDLからHDMIへ直接表示する構成にした。
+
+Pythonの通常のPygame wheelに含まれるSDLにはKMSDRMがなかったため、
+Debian/Raspberry Pi公式パッケージのPygame、SDL、Mesa、EGL、GLES、
+libdrmなどを次のユーザー領域へ展開した。
+
+  ~/.local/pygame-kms
+
+システム全体へapt installする権限がなかったため、この方法を使用した。
+
+run_kms.shでは、上記のライブラリとドライバーを使うために
+PYTHONPATH、LD_LIBRARY_PATH、LIBGL_DRIVERS_PATH、
+GBM_BACKENDS_PATHなどを設定している。
+
+また、次を指定している。
+
+  SDL_VIDEODRIVER=kmsdrm
+  SDL_KMSDRM_DEVICE_INDEX=1
+  SDL_AUDIODRIVER=dummy
+
+card1がRaspberry PiのHDMI出力を担当していたため、デバイス番号を1にした。
+音声は今回の確認対象ではないためdummyを使用している。
+
+
+通常のPygame描画で起きた問題
+----------------------------
+KMSDRMを使用するとHDMI画面の取得には成功したが、
+通常のPygame Display SurfaceやSDL2 Rendererでは次の状態になった。
+
+・背景のclearだけは表示された
+・文字、矩形、テクスチャは表示されなかった
+
+解像度やviewportを合わせても改善しなかった。
+
+
+最終的な描画方法
+----------------
+Pygameは次の処理に使用している。
+
+・KMSDRM画面の作成
+・フルスクリーン管理
+・キーボードイベントの取得
+・Escキーによる終了
+・文字や図形をPygame Surfaceへ描画
+
+完成したPygame SurfaceをOpenGL ESのテクスチャへアップロードし、
+OpenGL ESからKMSDRM/HDMIへ直接表示する構成にした。
+
+この方法で、1920×1200のHDMI画面に次を表示できた。
+
+・MockGPSの状態、時間、速度、緯度、経度、高度、方角、衛星数
+・右下の「CAMERA NOT CONNECTED」表示
+
+実GPSと実カメラの取得はまだ有効にしていない。
+
+
+実行方法
+--------
+HDMIにつながったRaspberry Piの物理ターミナルで、
+リポジトリのディレクトリから次を実行する。
+
+  ./run_kms.sh
+
+通常の「python main.py」ではKMS用の環境変数とライブラリが設定されず、
+offscreenへ戻る可能性があるため、run_kms.shを使用する。
+
+終了するにはEscキーを押す。
+
+
+注意点
+------
+・~/.local/pygame-kmsはリポジトリに含まれていない。
+・別のRaspberry Piへcloneしただけでは、KMS用ライブラリは自動導入されない。
+・実カメラを有効にするときは、OpenCVとlibGLの依存関係を別途整理する。
+・実GPSを有効にするときは、MockGPSを実デバイスの読み取り処理へ置き換える。
